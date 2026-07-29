@@ -1,5 +1,5 @@
 /**
- * Security Intel MCP — SelfLabbs
+ * Security Intel MCP — Datakoot
  * Keyless Model Context Protocol server giving AI agents vulnerability intelligence:
  * CVE lookups, per-package known vulnerabilities, and full dependency-manifest audits.
  *
@@ -16,7 +16,7 @@
 const POLAR_ORG = "7f455043-0b15-4a1c-b7a0-9c06c9f3b95e";
 const CHECKOUT = "https://buy.polar.sh/polar_cl_Q9y3qLrNbtsssN3w5m8SK56oNcruwrmxLEPnd34oAZf";
 const FREE_LIMIT = 100;
-const UA = "SelfLabbs-Security-Intel/1.0 (+https://selflabbs.com; contact@selflabbs.com)";
+const UA = "Datakoot-Security-Intel/1.0 (+https://datakoot.com; contact@datakoot.com)";
 const SERVER = { name: "security-intel", version: "2.0.0" };
 // OSV ecosystem names (https://ossf.github.io/osv-schema/#affectedpackage-field)
 const OSV_ECO = { npm: "npm", pypi: "PyPI", pip: "PyPI", cargo: "crates.io", crates: "crates.io", go: "Go", golang: "Go", maven: "Maven", rubygems: "RubyGems", gem: "RubyGems", nuget: "NuGet", composer: "Packagist", packagist: "Packagist", pub: "Pub", hex: "Hex" };
@@ -186,7 +186,7 @@ async function handleMCP(request, env) {
   if (method === "tools/list") return json(rpc(id, { tools: TOOLS }));
   if (method === "tools/call") {
     const access = await checkAccess(request, env);
-    if (!access.ok) return json(rpc(id, { content: [{ type: "text", text: `Free tier limit reached (${FREE_LIMIT} calls/day). Upgrade to Pro for unlimited access with one key across all SelfLabbs servers: ${CHECKOUT}` }], isError: true }));
+    if (!access.ok) return json(rpc(id, { content: [{ type: "text", text: `Free tier limit reached (${FREE_LIMIT} calls/day). Upgrade to Pro for unlimited access with one key across all Datakoot servers: ${CHECKOUT}` }], isError: true }));
     const tname = params && params.name;
     const args = (params && params.arguments) || {};
     if (!TOOLS.find((t) => t.name === tname)) return json(rpcErr(id, -32602, `Unknown tool: ${tname}`));
@@ -226,11 +226,11 @@ const MARK = `<svg width="26" height="26" viewBox="-34 -34 68 68" style="vertica
 function landing(host) {
   const ep = `https://${host}/mcp`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Security Intel MCP — Vulnerability intelligence for your AI agent | SelfLabbs</title>
+<title>Security Intel MCP — Vulnerability intelligence for your AI agent | Datakoot</title>
 <meta name="description" content="Keyless MCP server giving AI agents vulnerability intelligence: CVE lookups (NVD), per-package known vulnerabilities and whole dependency-manifest audits (OSV).">
 <style>${CSS}</style></head><body>
-<header><a href="https://selflabbs.com/" style="color:inherit"><div class="logo">${MARK}Self<span style="color:var(--accent)">Labbs</span></div></a>
-<nav><a href="https://selflabbs.com/">SelfLabbs</a><a href="#tools">Tools</a><a href="#start">Quick start</a><a href="#pricing">Pricing</a><a href="https://github.com/selflabbs">GitHub</a></nav></header>
+<header><a href="https://datakoot.com/" style="color:inherit"><div class="logo">${MARK}Data<span style="color:var(--accent)">koot</span></div></a>
+<nav><a href="https://datakoot.com/">Datakoot</a><a href="#tools">Tools</a><a href="#start">Quick start</a><a href="#pricing">Pricing</a><a href="https://github.com/datakoot">GitHub</a></nav></header>
 <div class="wrap">
 <section class="hero"><h1>Know if your agent's dependencies are <span class="accent">vulnerable</span>.</h1>
 <p class="sub">Security Intel gives AI agents vulnerability intelligence: look up any CVE, list known vulnerabilities for a package, or audit an entire dependency manifest in one call — from NVD and OSV. No API keys.</p></section>
@@ -248,11 +248,11 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key.</span></div>
-<div class="tier"><b>$19/mo · Pro</b><span>Unlimited calls</span><span>1 seat · one key unlocks all SelfLabbs servers.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$19/mo · Pro</b><span>Unlimited calls</span><span>1 seat · one key unlocks all Datakoot servers.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 <div class="tier"><b>$49/mo · Team</b><span>Unlimited calls</span><span>Up to 5 seats.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
-<footer><a href="https://selflabbs.com/" style="color:inherit">SelfLabbs</a> — infrastructure for the agent economy · <a href="https://github.com/selflabbs">GitHub</a> · Data: NVD/NIST (public domain), OSV.dev (CC-BY 4.0)</footer>
+<footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: NVD/NIST (public domain), OSV.dev (CC-BY 4.0)</footer>
 </body></html>`;
 }
 
