@@ -248,7 +248,7 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key.</span></div>
-<div class="tier"><b>$19/mo · Pro</b><span>Unlimited calls</span><span>1 seat · one key unlocks all Datakoot servers.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$15/mo · Pro</b><span>Unlimited calls</span><span>1 seat · one key unlocks all Datakoot servers.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 <div class="tier"><b>$49/mo · Team</b><span>Unlimited calls</span><span>Up to 5 seats.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
