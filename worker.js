@@ -16,8 +16,7 @@
 const POLAR_ORG = "7f455043-0b15-4a1c-b7a0-9c06c9f3b95e";
 const CHECKOUT = "https://buy.polar.sh/polar_cl_Q9y3qLrNbtsssN3w5m8SK56oNcruwrmxLEPnd34oAZf";
 const FREE_LIMIT = 100;          // anonymous, keyless, per UTC day
-const PRO_INCLUDED = 10000;      // calls included in Pro each month
-const OVERAGE_PER = 1000;        // then $5 per 1,000
+const PRO_INCLUDED = 50000;      // calls included in Pro each month
 const UA = "Datakoot-Security-Intel/1.0 (+https://datakoot.com; contact@datakoot.com)";
 const SERVER = { name: "security-intel", version: "2.0.0" };
 // OSV ecosystem names (https://ossf.github.io/osv-schema/#affectedpackage-field)
@@ -140,15 +139,20 @@ async function checkAccess(request, env) {
       // free tier, so a paying customer with a typo looked throttled for no reason.
       return { ok: false, pro: false, remaining: 0, limit: FREE_LIMIT, reason: "invalid_key" };
     }
-    // Pro is metered but never blocked: overage is billed, not refused.
+    // Pro: 50,000 calls a month, no daily limit. When the month's bucket is spent
+    // we do NOT cut a paying customer off -- they soft-fall-back to the free tier
+    // (100/day) for the rest of the month, or top up. Never a hard wall.
     if (env.QUOTA_DB) {
       try {
         const month = new Date().toISOString().slice(0, 7);
         const used = await bump(env, "pro:" + (await sha96("dk1:" + key)), month);
-        return { ok: true, pro: true, used, included: PRO_INCLUDED, remaining: null, limit: null };
-      } catch (e) { console.error("QUOTA error (pro):", e && e.message); }
+        if (used <= PRO_INCLUDED)
+          return { ok: true, pro: true, used, included: PRO_INCLUDED, remaining: PRO_INCLUDED - used, limit: null };
+        // bucket spent -> fall through to the free-tier check below (soft fallback)
+      } catch (e) { console.error("QUOTA error (pro):", e && e.message); return { ok: true, pro: true, remaining: null, limit: null }; }
+    } else {
+      return { ok: true, pro: true, remaining: null, limit: null };
     }
-    return { ok: true, pro: true, remaining: null, limit: null };
   }
 
   // ---- Free: anonymous, keyless, 100 a day
@@ -332,7 +336,7 @@ async function handleMCP(request, env) {
     if (!access.ok) {
       const msg = access.reason === "invalid_key"
         ? `That Datakoot API key was not recognised. Check it at https://datakoot.com/pricing, or remove the Authorization header to use the free tier (${FREE_LIMIT} calls/day, no signup).`
-        : `Daily free limit reached (${access.limit} calls). It resets at 00:00 UTC. Datakoot Pro includes ${PRO_INCLUDED.toLocaleString()} calls a month across all nine servers for $15, then $5 per ${OVERAGE_PER.toLocaleString()} — ${CHECKOUT}`;
+        : `Daily free limit reached (${access.limit} calls). It resets at 00:00 UTC. Datakoot Pro is ${PRO_INCLUDED.toLocaleString()} calls a month across all nine servers for $15 with no daily limit — ${CHECKOUT}`;
       return json(rpc(id, { content: [{ type: "text", text: msg }], isError: true }), 200, quotaHeaders(access));
     }
     const tname = params && params.name;
@@ -342,7 +346,7 @@ async function handleMCP(request, env) {
     try {
       const out = await runTool(tname, args);
       const meta = access.pro
-        ? (access.used > PRO_INCLUDED ? `\n\n(${access.used.toLocaleString()} calls this month — ${(access.used - PRO_INCLUDED).toLocaleString()} over the ${PRO_INCLUDED.toLocaleString()} included)` : "")
+        ? (access.used ? `\n\n(${access.used.toLocaleString()} of ${PRO_INCLUDED.toLocaleString()} Pro calls used this month)` : "")
         : (access.remaining == null ? "" : `\n\n(${access.remaining} free calls left today)`);
       return json(rpc(id, { content: [{ type: "text", text: JSON.stringify(out, null, 2) + meta }], isError: !!(out && out.error) }), 200, quotaHeaders(access));
     } catch (e) {
@@ -399,8 +403,7 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key, no signup.</span></div>
-<div class="tier"><b>$15/mo · Pro</b><span>10,000 calls / month</span><span>One key unlocks all nine Datakoot servers · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
-<div class="tier"><b>$49/mo · Team</b><span>50,000 calls / month</span><span>One shared key for your whole team · then $5 per 1,000, capped at $100.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$15/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
 <footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: NVD/NIST (public domain), OSV.dev (CC-BY 4.0)</footer>
