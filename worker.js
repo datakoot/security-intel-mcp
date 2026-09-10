@@ -32,13 +32,21 @@ const json = (obj, status = 200, extra = {}) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS, ...extra } });
 
 async function getJSON(url, { ttl = 3600, method = "GET", body = null } = {}) {
+  const isGet = method === "GET" && !body;
+  const cache = caches.default;
+  const ckey = new Request(url, { method: "GET" });
+  if (isGet) { const hit = await cache.match(ckey); if (hit) { try { return await hit.json(); } catch (e) {} } }
+  // Cache miss (or a POST): this call WILL hit the origin, so it counts against the breaker.
+  const up = dkUpstreamFor(url);
+  if (up) { const n = await dkUpstreamCount(up); if (n !== null && n > up.limit) return dkBusy(up); }
   const opt = { method, headers: { "User-Agent": UA, Accept: "application/json" } };
   if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
-  else { opt.cf = { cacheTtl: ttl, cacheEverything: true }; }
   let r = await fetch(url, opt); if (!r.ok && (r.status === 403 || r.status === 429 || r.status === 503)) { await new Promise((s) => setTimeout(s, 700)); r = await fetch(url, opt); }
   if (r.status === 404) return { _notfound: true };
   if (!r.ok) return { _error: `upstream ${r.status}` };
-  try { return await r.json(); } catch { return { _error: "bad json from upstream" }; }
+  const txt = await r.text();
+  if (isGet) { try { await cache.put(ckey, new Response(txt, { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=" + ttl } })); } catch (e) {} }
+  try { return JSON.parse(txt); } catch (e) { return { _error: "bad json from upstream" }; }
 }
 const normEco = (e) => OSV_ECO[String(e || "").toLowerCase().trim()] || null;
 const baseVersion = (v) => String(v || "").replace(/^[\^~>=<\s v]+/, "").trim();
@@ -94,6 +102,35 @@ async function bump(env, k, period) {
  * secret degrades privacy rather than taking the service down.
  */
 let DK_SALT = null, DK_KEY = null;
+// --- Global upstream circuit breaker (shared across all callers, colos and IPs) ---
+// Caching (below, in getJSON) absorbs repeated queries so they never touch a
+// source. This breaker caps how fast DISTINCT queries can reach the rate-sensitive
+// sources, so no flood — from any number of agents or rotating IPs — can push us
+// past a source's published limit and get Datakoot blocked. Counts ONLY origin
+// hits (cache misses). Trips into an honest "briefly busy, retry" — never fake data.
+let DK_QDB = null;
+const DK_UP_LIMITS = [
+  { host: "services.nvd.nist.gov", key: "nvd", win: 30, limit: 4 },   // NVD allows ~5 / 30s without a key
+  { host: "api.osv.dev",          key: "osv", win: 10, limit: 80 },
+];
+function dkUpstreamFor(url) {
+  try { const h = new URL(url).hostname; for (const x of DK_UP_LIMITS) if (x.host === h) return x; return null; }
+  catch (e) { return null; }
+}
+const DK_UP_SQL = "INSERT INTO upstream_rl (k, n, exp) VALUES (?1, 1, ?2) ON CONFLICT(k) DO UPDATE SET n = n + 1 RETURNING n";
+async function dkUpstreamCount(u) {
+  if (!DK_QDB) return null;                       // no D1 bound -> fail open, never break the API
+  const now = Math.floor(Date.now() / 1000);
+  const bucket = Math.floor(now / u.win);
+  try {
+    const row = await DK_QDB.prepare(DK_UP_SQL).bind("up:" + u.key + ":" + bucket, (bucket + 1) * u.win).first();
+    return row && typeof row.n === "number" ? row.n : null;
+  } catch (e) { return null; }                    // D1 error -> fail open
+}
+function dkBusy(u) {
+  return { _busy: true, _error: "Datakoot is briefly pausing calls to " + u.key.toUpperCase() +
+    " to stay within its fair-use rate limit. This is a short, deliberate pause on our side, NOT an outage and NOT a statement about your query — retry in a few seconds." };
+}
 async function dkMacKey() {
   if (!DK_KEY) {
     DK_KEY = await crypto.subtle.importKey(
@@ -414,6 +451,7 @@ function landing(host) {
 export default {
   async fetch(request, env) {
     if (DK_SALT === null) DK_SALT = env.IP_SALT || "";
+    if (DK_QDB === null) DK_QDB = env.QUOTA_DB || false;
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const url = new URL(request.url);
     if (url.pathname.endsWith("/.well-known/owners.json")) return json({ $schema: "https://verifymcp.io/schemas/owners.json", owners: ["hello@datakoot.com"] });
@@ -428,6 +466,7 @@ export default {
 
   async scheduled(event, env, ctx) {
     if (DK_SALT === null) DK_SALT = env.IP_SALT || "";
+    if (DK_QDB === null) DK_QDB = env.QUOTA_DB || false;
     // Data retention. The privacy policy at https://datakoot.com/privacy promises
     // that call counters are deleted no later than 90 days after a caller's last
     // call. This job, run daily by a Cron Trigger on this worker, is what enforces
@@ -443,6 +482,8 @@ export default {
         let d = null;
         try { d = await env.QUOTA_DB.prepare("DELETE FROM daily WHERE updated < ?1").bind(cutoff).run(); }
         catch (e) { console.error("DK RETENTION daily prune failed:", (e && e.message) || String(e)); }
+        try { await env.QUOTA_DB.prepare("DELETE FROM upstream_rl WHERE exp < ?1").bind(Math.floor(Date.now() / 1000)).run(); }
+        catch (e) { console.error("DK RETENTION upstream_rl prune failed:", (e && e.message) || String(e)); }
         console.log("DK RETENTION pruned quota=" + ((r && r.meta && r.meta.changes) || 0) +
                     " daily=" + ((d && d.meta && d.meta.changes) || 0) + " row(s) older than 90 days");
       } catch (e) {
