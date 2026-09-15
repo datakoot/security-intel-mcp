@@ -1,24 +1,9 @@
-/**
- * Security Intel MCP — Datakoot
- * Keyless Model Context Protocol server giving AI agents vulnerability intelligence:
- * CVE lookups, per-package known vulnerabilities, and full dependency-manifest audits.
- *
- * Data sources (all public, keyless, commercial-reuse OK with attribution):
- *   - NVD (NIST)   https://services.nvd.nist.gov   (US government, public domain)
- *   - OSV.dev      https://api.osv.dev              (CC-BY 4.0; used by Trivy, Grype, etc.)
- *
- * (URL-reputation and IP-reputation tools were removed: their upstream providers —
- * abuse.ch/URLhaus and AbuseIPDB — do not permit commercial redistribution of their data.)
- *
- * Cloudflare Worker (module). Bindings: KV "RL" (licence-key cache), D1 "QUOTA_DB" (call counter).
- */
-
 const POLAR_ORG = "7f455043-0b15-4a1c-b7a0-9c06c9f3b95e";
 const CHECKOUT = "https://buy.polar.sh/polar_cl_Q9y3qLrNbtsssN3w5m8SK56oNcruwrmxLEPnd34oAZf";
 const FREE_LIMIT = 100;          // anonymous, keyless, per UTC day
 const PRO_INCLUDED = 50000;      // calls included in Pro each month
 const UA = "Datakoot-Security-Intel/1.0 (+https://datakoot.com; contact@datakoot.com)";
-const SERVER = { name: "security-intel", version: "2.0.0" };
+const SERVER = { name: "security-intel", version: "2.1.0" };
 // OSV ecosystem names (https://ossf.github.io/osv-schema/#affectedpackage-field)
 const OSV_ECO = { npm: "npm", pypi: "PyPI", pip: "PyPI", cargo: "crates.io", crates: "crates.io", go: "Go", golang: "Go", maven: "Maven", rubygems: "RubyGems", gem: "RubyGems", nuget: "NuGet", composer: "Packagist", packagist: "Packagist", pub: "Pub", hex: "Hex" };
 
@@ -112,6 +97,8 @@ let DK_QDB = null;
 const DK_UP_LIMITS = [
   { host: "services.nvd.nist.gov", key: "nvd", win: 30, limit: 4 },   // NVD allows ~5 / 30s without a key
   { host: "api.osv.dev",          key: "osv", win: 10, limit: 80 },
+  { host: "www.cisa.gov",         key: "kev", win: 60, limit: 30 },   // KEV is a static feed, cached 6h; this is just a courtesy cap
+  { host: "api.first.org",        key: "epss", win: 10, limit: 40 },  // FIRST EPSS fair use
 ];
 function dkUpstreamFor(url) {
   try { const h = new URL(url).hostname; for (const x of DK_UP_LIMITS) if (x.host === h) return x; return null; }
@@ -244,14 +231,54 @@ async function osvQuery(ecosystem, name, version) {
   }));
 }
 
+/* CISA Known Exploited Vulnerabilities (KEV) — the authoritative list of CVEs
+ * confirmed exploited in the wild. Public domain, updated ~daily. A big static
+ * feed, so it is cached hard (6h) and rarely touches origin. */
+async function kevCatalog() {
+  const d = await getJSON("https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", { ttl: 21600 });
+  if (d._error || d._busy || !Array.isArray(d.vulnerabilities)) return null;
+  return d;
+}
+function kevEntry(cat, id) {
+  if (!cat) return null;
+  const e = cat.vulnerabilities.find((v) => String(v.cveID || "").toUpperCase() === id);
+  if (!e) return null;
+  return {
+    listed: true, vendor: e.vendorProject, product: e.product, name: e.vulnerabilityName,
+    date_added: e.dateAdded, due_date: e.dueDate,
+    known_ransomware_use: e.knownRansomwareCampaignUse === "Known",
+    required_action: e.requiredAction,
+  };
+}
+/* FIRST.org EPSS — probability (0-1) a CVE is exploited in the next 30 days,
+ * plus its percentile among all scored CVEs. Free, keyless. */
+async function epssFor(ids) {
+  const q = ids.map((x) => String(x).toUpperCase()).join(",");
+  const d = await getJSON("https://api.first.org/data/v1/epss?cve=" + encodeURIComponent(q), { ttl: 10800 });
+  if (d._error || d._busy || !Array.isArray(d.data)) return null;
+  const m = {};
+  for (const r of d.data) m[String(r.cve).toUpperCase()] = { epss: parseFloat(r.epss), percentile: parseFloat(r.percentile), date: r.date };
+  return m;
+}
+
 /* ------------------------------------------------------------------- tools */
 const DK_AD = {"*.ecosystem":"Package registry to look in. One of: npm, pypi, cargo, go, maven, rubygems, nuget, composer, pub, hex.","*.name":"Exact package name as published in that registry, e.g. lodash for npm, requests for pypi."};
 function dkDescribe(ts) { try { for (const t of ts) { const p = ((t.inputSchema || {}).properties) || {}; for (const k of Object.keys(p)) { const d = DK_AD[t.name + "." + k] || DK_AD["*." + k]; if (d && p[k] && !p[k].description) p[k].description = d; } } } catch (e) {} return ts; }
 const TOOLS = [
   {
     name: "cve_lookup",
-    description: "Look up a CVE by ID and get a compact summary: description, CVSS score & severity, vector, CWE weakness, publish date, and references. Source: NVD (NIST).",
+    description: "Look up a CVE by ID and get a compact summary: description, CVSS score & severity, vector, CWE weakness, publish date, references — plus whether it is on the CISA Known-Exploited list (actively exploited in the wild) and its EPSS exploit-probability. Sources: NVD (NIST), CISA KEV, FIRST EPSS.",
     inputSchema: { type: "object", properties: { cve_id: { type: "string", description: "e.g. CVE-2021-44228" } }, required: ["cve_id"] },
+  },
+  {
+    name: "known_exploited",
+    description: "Check whether a CVE is on the CISA Known Exploited Vulnerabilities (KEV) catalog — confirmed exploited in the wild — or list the most recently added exploited vulnerabilities. Pass cve_id to check one; omit it to list recent (optionally filter by vendor/product, or ransomware_only). Source: CISA KEV, updated ~daily.",
+    inputSchema: { type: "object", properties: { cve_id: { type: "string", description: "Optional. Check a single CVE, e.g. CVE-2021-44228." }, limit: { type: "number", description: "When listing, how many newest entries to return (default 20, max 100)." }, vendor: { type: "string", description: "Optional. Filter by vendor or product name substring." }, ransomware_only: { type: "boolean", description: "Optional. Only vulns CISA links to known ransomware campaigns." } }, required: [] },
+  },
+  {
+    name: "epss_score",
+    description: "Get the EPSS exploit-probability score (0-1) and percentile for one or more CVEs — the likelihood each is exploited in the next 30 days. Use it to prioritize patching. Pass cve_id for one, or cve_ids (array or comma-separated) for many. Source: FIRST.org EPSS.",
+    inputSchema: { type: "object", properties: { cve_id: { type: "string", description: "A single CVE id." }, cve_ids: { type: "array", items: { type: "string" }, description: "Multiple CVE ids (or pass a comma-separated string)." } }, required: [] },
   },
   {
     name: "package_vulnerabilities",
@@ -273,14 +300,67 @@ async function runTool(name, args) {
     if (d._error) return { error: "NVD is temporarily unavailable (" + d._error + "). This is a rate limit or outage upstream, NOT a statement that " + id + " does not exist. Do not treat this as 'no vulnerability'. Try again shortly." }; if (d._notfound || !d.vulnerabilities || !d.vulnerabilities.length) return { error: `CVE '${id}' not found in NVD.` };
     const c = d.vulnerabilities[0].cve;
     const desc = (c.descriptions || []).find((x) => x.lang === "en");
-    return {
+    const out = {
       id: c.id, status: c.vulnStatus,
       description: desc ? desc.value : null,
       cvss: cvssFrom(c.metrics),
       cwe: (c.weaknesses || []).flatMap((w) => (w.description || []).map((x) => x.value)).filter((v) => v && v !== "NVD-CWE-noinfo").slice(0, 3),
       published: c.published, last_modified: c.lastModified,
       references: (c.references || []).slice(0, 5).map((r) => r.url),
-      source: "NVD / NIST (public domain)",
+    };
+    // Enrich with real-world exploitation signal — the two questions triage actually turns on.
+    const [cat, epssMap] = await Promise.all([kevCatalog(), epssFor([id])]);
+    const kev = kevEntry(cat, id);
+    out.known_exploited = kev || { listed: false, note: cat ? "Not on the CISA KEV catalog — not confirmed exploited by CISA. This does NOT prove it is not being exploited elsewhere." : "CISA KEV was unreachable; exploited-status unknown, not 'no'." };
+    out.exploit_probability = (epssMap && epssMap[id]) || (epssMap ? { epss: null, percentile: null, note: "No EPSS score published (often a very new or rejected CVE)." } : null);
+    out.sources = ["NVD / NIST (public domain)", "CISA KEV (public domain)", "FIRST.org EPSS"];
+    return out;
+  }
+  if (name === "known_exploited") {
+    const cat = await kevCatalog();
+    if (!cat) return { error: "The CISA KEV catalog is temporarily unavailable upstream. This is NOT a statement that a CVE is not exploited — retry shortly." };
+    if (args.cve_id) {
+      const id = String(args.cve_id).toUpperCase().trim();
+      if (!/^CVE-\d{4}-\d{4,}$/.test(id)) return { error: "Provide a valid CVE id, e.g. CVE-2021-44228." };
+      const e = kevEntry(cat, id);
+      return e
+        ? { cve_id: id, ...e, catalog_version: cat.catalogVersion, source: "CISA KEV (public domain)" }
+        : { cve_id: id, listed: false, note: "Not on the CISA Known Exploited Vulnerabilities catalog — CISA has not confirmed active exploitation. It does NOT guarantee the vulnerability is not being exploited anywhere.", source: "CISA KEV (public domain)" };
+    }
+    let limit = Math.max(1, Math.min(parseInt(args.limit, 10) || 20, 100));
+    let vulns = cat.vulnerabilities.slice();
+    if (args.vendor) { const vq = String(args.vendor).toLowerCase(); vulns = vulns.filter((v) => String(v.vendorProject || "").toLowerCase().includes(vq) || String(v.product || "").toLowerCase().includes(vq)); }
+    if (args.ransomware_only) vulns = vulns.filter((v) => v.knownRansomwareCampaignUse === "Known");
+    vulns.sort((a, b) => String(b.dateAdded || "").localeCompare(String(a.dateAdded || "")));
+    const rows = vulns.slice(0, limit).map((v) => ({
+      cve_id: v.cveID, vendor: v.vendorProject, product: v.product, name: v.vulnerabilityName,
+      date_added: v.dateAdded, due_date: v.dueDate,
+      known_ransomware_use: v.knownRansomwareCampaignUse === "Known",
+      description: String(v.shortDescription || "").slice(0, 300),
+    }));
+    return {
+      catalog_version: cat.catalogVersion, catalog_count: cat.count, released: cat.dateReleased,
+      returned: rows.length, filter: { vendor: args.vendor || null, ransomware_only: !!args.ransomware_only },
+      vulnerabilities: rows, source: "CISA KEV (public domain)",
+    };
+  }
+  if (name === "epss_score") {
+    let ids = [];
+    if (Array.isArray(args.cve_ids)) ids = args.cve_ids;
+    else if (typeof args.cve_ids === "string") ids = args.cve_ids.split(",");
+    else if (args.cve_id) ids = [args.cve_id];
+    ids = ids.map((x) => String(x).toUpperCase().trim()).filter((x) => /^CVE-\d{4}-\d{4,}$/.test(x)).slice(0, 100);
+    if (!ids.length) return { error: "Provide 'cve_id', or 'cve_ids' (array or comma-separated), each like CVE-2021-44228." };
+    const m = await epssFor(ids);
+    if (!m) return { error: "EPSS is temporarily unavailable upstream. Retry shortly." };
+    const scores = ids.map((id) => (m[id]
+      ? { cve_id: id, epss: m[id].epss, percentile: m[id].percentile }
+      : { cve_id: id, epss: null, percentile: null, note: "No EPSS score published for this CVE." }));
+    return {
+      model: "EPSS (FIRST.org)", as_of: (m[ids[0]] && m[ids[0]].date) || null,
+      scored: scores.filter((s) => s.epss != null).length, scores,
+      note: "EPSS = probability (0–1) the CVE is exploited in the next 30 days; percentile ranks it among all scored CVEs.",
+      source: "FIRST.org EPSS",
     };
   }
   if (name === "package_vulnerabilities") {
@@ -362,7 +442,7 @@ async function handleMCP(request, env) {
   if (method === "initialize") {
     return json(rpc(id, {
       protocolVersion: dkProto(params), capabilities: { tools: {} }, serverInfo: SERVER,
-      instructions: "Security Intel: vulnerability intelligence for AI agents — CVE lookups (NVD), per-package known vulnerabilities and whole-manifest dependency audits (OSV). Call audit_dependencies with a package.json before trusting a project's dependency tree.",
+      instructions: "Security Intel: vulnerability intelligence for AI agents — CVE lookups enriched with real-world exploitation signal (NVD + CISA Known-Exploited + EPSS), per-package known vulnerabilities and whole-manifest dependency audits (OSV), plus a live feed of what's actively exploited (known_exploited) and exploit-probability scoring (epss_score). Call audit_dependencies before trusting a project's dependency tree; use known_exploited + epss_score to prioritize what to patch first.",
     }));
   }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return new Response(null, { status: 202, headers: CORS });
@@ -419,16 +499,18 @@ function landing(host) {
   const ep = `https://${host}/mcp`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Security Intel MCP — Vulnerability intelligence for your AI agent | Datakoot</title>
-<meta name="description" content="Keyless MCP server giving AI agents vulnerability intelligence: CVE lookups (NVD), per-package known vulnerabilities and whole dependency-manifest audits (OSV).">
+<meta name="description" content="Keyless MCP server giving AI agents vulnerability intelligence: CVE lookups enriched with CISA Known-Exploited status and EPSS exploit-probability (NVD + CISA KEV + FIRST), per-package known vulnerabilities and whole dependency-manifest audits (OSV).">
 <style>${CSS}</style></head><body>
 <header><a href="https://datakoot.com/" style="color:inherit"><div class="logo">${MARK}Data<span style="color:var(--accent)">koot</span></div></a>
 <nav><a href="https://datakoot.com/">Datakoot</a><a href="#tools">Tools</a><a href="#start">Quick start</a><a href="#pricing">Pricing</a><a href="https://github.com/datakoot">GitHub</a></nav></header>
 <div class="wrap">
 <section class="hero"><h1>Know if your agent's dependencies are <span class="accent">vulnerable</span>.</h1>
-<p class="sub">Security Intel gives AI agents vulnerability intelligence: look up any CVE, list known vulnerabilities for a package, or audit an entire dependency manifest in one call — from NVD and OSV. No API keys.</p></section>
+<p class="sub">Security Intel gives AI agents vulnerability intelligence: look up any CVE — enriched with whether it's <em>actively exploited</em> (CISA KEV) and how likely it is to be (EPSS) — list what's newly exploited in the wild, score exploit-probability, and audit an entire dependency manifest in one call. NVD, CISA KEV, FIRST EPSS, OSV. No API keys.</p></section>
 
 <section class="section" id="tools"><h2>Tools</h2><div class="grid">
-<div class="card"><h3><code>cve_lookup</code></h3><p>CVE summary: CVSS score, severity, CWE, references (NVD).</p></div>
+<div class="card"><h3><code>cve_lookup</code></h3><p>CVE summary: CVSS, severity, CWE, references — plus is-it-exploited (CISA KEV) and exploit-probability (EPSS).</p></div>
+<div class="card"><h3><code>known_exploited</code></h3><p>Is a CVE actively exploited in the wild, or list what CISA just added to the KEV catalog.</p></div>
+<div class="card"><h3><code>epss_score</code></h3><p>EPSS exploit-probability (0–1) for one or many CVEs — patch the likely ones first.</p></div>
 <div class="card"><h3><code>package_vulnerabilities</code></h3><p>Known vulnerabilities for a package/version (OSV).</p></div>
 <div class="card"><h3><code>audit_dependencies</code></h3><p>Audit a whole package.json for vulnerabilities in one call.</p></div>
 </div></section>
@@ -443,7 +525,7 @@ function landing(host) {
 <div class="tier"><b>$15/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
-<footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: NVD/NIST (public domain), OSV.dev (CC-BY 4.0)</footer>
+<footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: NVD/NIST (public domain), CISA KEV (public domain), FIRST.org EPSS, OSV.dev (CC-BY 4.0)</footer>
 </body></html>`;
 }
 
