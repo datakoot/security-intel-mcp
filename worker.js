@@ -462,10 +462,11 @@ async function handleMCP(request, env) {
     if (!TOOLS.find((t) => t.name === tname)) return json(rpcErr(id, -32602, `Unknown tool: ${tname}`), 200, quotaHeaders(access)); { const _s = (TOOLS.find((t) => t.name === tname).inputSchema || {}).properties || {}; const _rq = ((TOOLS.find((t) => t.name === tname) || {}).inputSchema || {}).required || []; const _bad = Object.keys(args).filter((k) => !(k in _s)).map((k) => "unexpected '" + k + "'").concat(_rq.filter((k) => args[k] === undefined || args[k] === null || args[k] === "").map((k) => "missing required '" + k + "'")); if (_bad.length) return json(rpcErr(id, -32602, "Bad arguments for " + tname + ": " + _bad.join(", ") + ". Valid: " + (Object.keys(_s).join(", ") || "none") + ". The call was refused rather than ignoring them, because ignoring an argument returns a confident answer to a different question than the one asked."), 200, quotaHeaders(access)); }
     try {
       const out = await runTool(tname, args);
-      const meta = access.pro
-        ? (access.used ? `\n\n(${access.used.toLocaleString()} of ${PRO_INCLUDED.toLocaleString()} Pro calls used this month)` : "")
-        : (access.remaining == null ? "" : `\n\n(${access.remaining} free calls left today)`);
-      return json(rpc(id, { content: [{ type: "text", text: JSON.stringify(out, null, 2) + meta }], isError: !!(out && out.error) }), 200, quotaHeaders(access));
+      const q = access.pro
+        ? (access.used ? `${access.used.toLocaleString()} of ${PRO_INCLUDED.toLocaleString()} Pro calls used this month` : "")
+        : (access.remaining == null ? "" : `${access.remaining} free calls left today`);
+      const _h = quotaHeaders(access); if (q) _h["X-Datakoot-Quota"] = q;
+      return json(rpc(id, { content: [{ type: "text", text: JSON.stringify(out, null, 2) }], isError: !!(out && out.error) }), 200, _h);
     } catch (e) {
       return json(rpc(id, { content: [{ type: "text", text: "Error: " + (e && e.message || String(e)) }], isError: true }), 200, quotaHeaders(access));
     }
