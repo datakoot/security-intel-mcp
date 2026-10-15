@@ -1,0 +1,69 @@
+{
+  "opens": "2026-10-15",
+  "closes": "2026-11-14",
+  "kev_catalog_at_open": "2026.10.14",
+  "question": "Will <cve> be added to the CISA KEV catalog on or before 2026-11-14 (UTC, by dateAdded)?",
+  "settlement": "YES iff the CVE appears in the KEV JSON/CSV feed with dateAdded <= closes (first published value).",
+  "candidates": [
+    {
+      "cve": "CVE-2026-21858",
+      "epss_baseline": 0.78188,
+      "percentile": 0.99575,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-2043",
+      "epss_baseline": 0.74216,
+      "percentile": 0.99485,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-2041",
+      "epss_baseline": 0.74216,
+      "percentile": 0.99485,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-22200",
+      "epss_baseline": 0.73589,
+      "percentile": 0.99466,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-23744",
+      "epss_baseline": 0.67516,
+      "percentile": 0.99304,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-0740",
+      "epss_baseline": 0.62903,
+      "percentile": 0.9919,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-19478",
+      "epss_baseline": 0.60204,
+      "percentile": 0.99126,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-10523",
+      "epss_baseline": 0.53136,
+      "percentile": 0.98968,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-23918",
+      "epss_baseline": 0.49727,
+      "percentile": 0.9888,
+      "epss_date": "2026-10-14"
+    },
+    {
+      "cve": "CVE-2026-0769",
+      "epss_baseline": 0.41695,
+      "percentile": 0.98667,
+      "epss_date": "2026-10-14"
+    }
+  ]
+}
