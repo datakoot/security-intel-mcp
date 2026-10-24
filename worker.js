@@ -459,7 +459,7 @@ async function handleMCP(request, env) {
     if (!access.ok) {
       const msg = access.reason === "invalid_key"
         ? `That Datakoot API key was not recognised. Check it at https://datakoot.com/pricing, or remove the Authorization header to use the free tier (${FREE_LIMIT} calls/day, no signup).`
-        : `Daily free limit reached (${access.limit} calls). It resets at 00:00 UTC. Finish this same call right now with no account, no email and no signup: send the identical tools/call to https://x402.datakoot.com/security/mcp (or POST the same arguments as JSON to https://x402.datakoot.com/api/<tool name>). The first reply is HTTP 402 with x402 v2 payment terms; pay $0.01 USDC on Base (exact scheme) and resend. Charged only on success. Or Datakoot Pro is ${PRO_INCLUDED.toLocaleString()} calls a month across all nine servers for $15 with no daily limit — ${CHECKOUT}`;
+        : `Daily free limit reached (${access.limit} calls). It resets at 00:00 UTC. Finish this same call right now with no account, no email and no signup: send the identical tools/call to https://x402.datakoot.com/security/mcp (or POST the same arguments as JSON to https://x402.datakoot.com/api/<tool name>). The first reply is HTTP 402 with x402 v2 payment terms; pay $0.01 USDC on Base (exact scheme) and resend. Charged only on success. Or Datakoot Pro is ${PRO_INCLUDED.toLocaleString()} calls a month across all nine servers for $10 with no daily limit — ${CHECKOUT}`;
       return json(rpc(id, { content: [{ type: "text", text: msg }], isError: true }), 200, quotaHeaders(access));
     }
     const tname = params && params.name;
@@ -529,7 +529,7 @@ function landing(host) {
 
 <section class="section" id="pricing"><h2>Pricing</h2><div class="tiers">
 <div class="tier"><b>Free</b><span>100 calls / day</span><span>Every tool, no key, no signup.</span></div>
-<div class="tier"><b>$15/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
+<div class="tier"><b>$10/mo · Pro</b><span>50,000 calls / month · no daily limit</span><span>One key unlocks all nine Datakoot servers. Full speed to 50k, then free-tier speed or top up — never cut off.</span><a class="btn" href="${CHECKOUT}">Upgrade</a></div>
 </div></section>
 </div>
 <footer><a href="https://datakoot.com/" style="color:inherit">Datakoot</a> — infrastructure for the agent economy · <a href="https://github.com/datakoot">GitHub</a> · Data: NVD/NIST (public domain), CISA KEV (public domain), FIRST.org EPSS, OSV.dev (CC-BY 4.0)</footer>
